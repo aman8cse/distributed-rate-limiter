@@ -1,219 +1,315 @@
 # Distributed Rate Limiter
 
-**One shared limit. Every server. Atomic by design.**
+A TypeScript rate-limiting library for Node.js and Express, supporting
+in-memory and Redis-backed distributed rate limiting.
 
-A distributed rate-limiting engine built with TypeScript, Node.js, Redis, and Lua. Designed to enforce consistent request limits across multiple application servers using shared Redis state and atomic token-bucket operations.
+Use it to limit incoming requests by client identity, protect sensitive
+endpoints, and share rate-limit state across multiple application instances.
 
-The goal is to make distributed rate limiting accessible to backend developers through a simple, reusable interface.
+## Features
 
-> **Project status:** In active development. The token-bucket algorithm, in-memory store, Upstash Redis integration, and atomic Redis operation have been implemented and tested. Express middleware, configurable policies, packaging, and production-hardening features are planned.
+- Token Bucket rate-limiting algorithm
+- Express middleware
+- In-memory storage
+- Redis-backed distributed rate limiting
+- Atomic Redis updates using a Lua script
+- Configurable rate-limit policies
+- Configurable in-memory fallback when Redis fails
+- TypeScript declarations
+- Custom client-key generation
 
-## The Problem
+## Installation
 
-When an application runs multiple API servers, a rate limiter that stores counters in local memory cannot enforce a consistent global limit.
-
-For example, suppose a user has a limit of 100 requests per minute and requests are distributed across three servers.
-
-A local rate limiter could independently allow 100 requests on each server, effectively permitting up to 300 requests.
-
-This project addresses that coordination problem through shared Redis state and atomic operations.
-
-## How It Works
-
-```text
-                    Incoming Requests
-                           |
-                           v
-                    API Gateway / App
-                           |
-                           v
-                    Rate Limit Engine
-                           |
-                           v
-                     Redis Store
-                           |
-                           v
-                    Atomic Lua Script
-                           |
-                           v
-                    Rate Limit Decision
-                       /         \
-                  Allowed       Rejected
-                     |              |
-                     v              v
-                API Endpoint    HTTP 429
+```bash
+npm install distributed-rate-limiter express ioredis
 ```
 
-The rate-limiting engine determines whether a request should be permitted. Redis stores shared bucket state, and a Lua script performs the state update atomically.
+If your project uses TypeScript, the package includes TypeScript declarations.
 
-This allows multiple application servers to coordinate through the same Redis-backed limiter.
+## Quick Start
 
-## Current Features
+```typescript
+import express from "express";
 
-* **Token Bucket algorithm:** Supports controlled bursts and time-based token refill.
-* **TypeScript:** Strict typing and explicit interfaces between components.
-* **Redis integration:** Uses Upstash Redis for shared state.
-* **Atomic operations:** Lua executes the token-bucket state transition as one Redis operation.
-* **Storage abstraction:** Separates the rate-limiting logic from the storage implementation.
-* **In-memory implementation:** Supports local development and algorithm testing.
-* **Concurrency testing:** Verified that 20 concurrent requests against a fresh bucket with capacity 5 result in 5 allowed requests and 15 rejected requests.
+import {
+  RateLimiter,
+  InMemoryStore,
+  rateLimit,
+} from "distributed-rate-limiter";
 
-## Technology Stack
+const app = express();
 
-| Technology    | Purpose                                |
-| ------------- | -------------------------------------- |
-| TypeScript    | Typed application logic and interfaces |
-| Node.js       | Runtime                                |
-| Express       | Planned HTTP middleware integration    |
-| Redis         | Shared rate-limit state                |
-| Upstash Redis | Managed Redis infrastructure           |
-| Lua           | Atomic token-bucket operations         |
+const limiter = new RateLimiter(
+  new InMemoryStore(),
+);
+
+const policy = {
+  name: "api",
+  capacity: 10,
+  refillRate: 1,
+};
+
+app.get(
+  "/api",
+  rateLimit(limiter, { policy }),
+  (_req, res) => {
+    res.json({ message: "Request allowed" });
+  },
+);
+
+app.listen(3000, () => {
+  console.log("Server running on port 3000");
+});
+```
+
+This policy starts with 10 tokens and refills at one token per second.
+
+Each allowed request consumes one token.
+
+When no token is available, the middleware returns HTTP 429.
+
+## Redis-backed Rate Limiting
+
+For distributed rate limiting, use Redis as the shared store.
+
+```typescript
+import express from "express";
+import Redis from "ioredis";
+
+import {
+  RateLimiter,
+  RedisStore,
+  rateLimit,
+} from "distributed-rate-limiter";
+
+const app = express();
+
+const redis = new Redis(process.env.REDIS_URL!);
+
+const limiter = new RateLimiter(
+  new RedisStore(redis),
+);
+
+const policy = {
+  name: "api",
+  capacity: 100,
+  refillRate: 10,
+};
+
+app.get(
+  "/api",
+  rateLimit(limiter, { policy }),
+  (_req, res) => {
+    res.json({ message: "Request allowed" });
+  },
+);
+
+app.listen(3000);
+```
+
+Configure `REDIS_URL` in your environment.
+
+Each application deployment should use its own appropriately secured Redis
+connection. Multiple application instances can share rate-limit state by
+using the same Redis database and key namespace.
+
+Do not commit Redis credentials to source control.
+
+## Rate-Limit Policies
+
+A policy contains:
+
+| Property | Description |
+|---|---|
+| `name` | Identifies the policy and separates its rate-limit keys |
+| `capacity` | Maximum number of tokens the bucket can hold |
+| `refillRate` | Tokens added per second |
+
+Example:
+
+```typescript
+const loginPolicy = {
+  name: "login",
+  capacity: 5,
+  refillRate: 0.1,
+};
+```
+
+This allows up to five initial requests and refills at 0.1 tokens per second.
+
+A token bucket is not a fixed-window limiter. Requests are permitted according
+to the number of tokens currently available.
+
+## Custom Client Identity
+
+By default, the middleware uses the request IP address as the client key.
+
+You can customize it:
+
+```typescript
+app.get(
+  "/api/profile",
+  rateLimit(limiter, {
+    policy,
+    getKey: (req) => {
+      return req.header("x-user-id") ?? req.ip ?? "unknown";
+    },
+  }),
+  (_req, res) => {
+    res.json({ message: "Request allowed" });
+  },
+);
+```
+
+Only use identity values that your application can trust.
+
+Do not trust arbitrary client-provided identity headers unless your application
+authenticates or validates them.
+
+If your application runs behind a reverse proxy, configure Express proxy
+trust appropriately before relying on `req.ip`.
+
+## Redis Failure and In-Memory Fallback
+
+By default, `fallbackLimit` is zero.
+
+```typescript
+const limiter = new RateLimiter(
+  new RedisStore(redis),
+  { fallbackLimit: 0 },
+);
+```
+
+If the Redis-backed store fails, the limiter fails closed. The middleware
+returns HTTP 503 rather than allowing the request through without a rate-limit
+decision.
+
+To enable a local fallback:
+
+```typescript
+const limiter = new RateLimiter(
+  new RedisStore(redis),
+  { fallbackLimit: 5 },
+);
+```
+
+When Redis fails, the limiter uses a local in-memory token bucket with the
+configured fallback capacity.
+
+The fallback uses the policy's refill rate.
+
+### Important limitations
+
+- In-memory fallback state is local to each application process.
+- Multiple application instances do not share fallback state.
+- Aggregate request allowance may increase during a Redis outage.
+- A timed-out Redis operation may still execute on the Redis server.
+- Redis recovery does not synchronize the local fallback bucket with Redis.
+
+Choose fail-closed behavior for sensitive endpoints when enforcing a global
+limit is more important than availability.
+
+## HTTP Responses
+
+Allowed requests continue to the next Express handler.
+
+Rate-limited requests receive:
+
+```http
+HTTP/1.1 429 Too Many Requests
+```
+
+The middleware includes rate-limit headers and sets `Retry-After` when the
+decision provides a retry duration.
+
+When the rate limiter is unavailable and fallback is disabled, the middleware
+returns HTTP 503.
 
 ## Architecture
 
-The project separates the core algorithm, orchestration, and storage.
-
 ```text
-src/
-├── config/
-│   ├── env.ts
-│   ├── redis.ts
-│   └── policies.ts
-├── core/
-│   ├── types.ts
-│   ├── TokenBucket.ts
-│   └── RateLimiter.ts
-├── middleware/
-├── store/
-│   ├── RateLimitStore.ts
-│   ├── InMemoryStore.ts
-│   ├── RedisStore.ts
-│   └── tokenBucket.lua
-└── server.ts
+Express Middleware
+        |
+        v
+    RateLimiter
+        |
+        v
+  RateLimitStore
+     /       \
+    v         v
+InMemory    RedisStore
+              |
+              v
+          Lua Script
+              |
+              v
+             Redis
 ```
 
-The structure is evolving as development progresses.
+The store interface separates the rate-limiting orchestration from the
+storage implementation.
 
-### Core responsibilities
+The Redis Lua script performs the token-bucket update atomically within Redis.
 
-* `TokenBucket.ts` — Implements the token-bucket calculation.
-* `RateLimiter.ts` — Coordinates rate-limit decisions.
-* `RateLimitStore.ts` — Defines the storage contract.
-* `InMemoryStore.ts` — Maintains bucket state in application memory.
-* `RedisStore.ts` — Executes rate-limit operations through Redis.
-* `tokenBucket.lua` — Performs atomic state updates inside Redis.
-* `config/` — Holds application configuration and rate-limit policies.
-* `middleware/` — Will expose the engine to Express applications.
+When multiple application instances use the same Redis keys, they share the
+same distributed rate-limit state.
 
-## Token Bucket Algorithm
-
-Each bucket maintains two values:
-
-* `tokens`: The number of currently available tokens.
-* `lastRefillTime`: The timestamp of the previous refill calculation.
-
-For a refill rate of \(r\) tokens per second and elapsed time \(\Delta t\):
-
-```text
-refilledTokens = min(capacity, tokens + r * elapsedSeconds)
-```
-
-If at least one token is available, the request consumes one token and is allowed. Otherwise, the request is rejected.
-
-The algorithm supports bursts up to the bucket capacity while replenishing tokens over time.
-
-## Planned Rate-Limit Policies
-
-The project is being extended to support different policies for different routes.
-
-| Policy   | Capacity |    Refill rate | Intended use         |
-| -------- | -------: | -------------: | -------------------- |
-| Products |      100 |  10 tokens/sec | Read-heavy endpoints |
-| Orders   |       10 |    1 token/sec | Order creation       |
-| Login    |        5 | 0.1 tokens/sec | Login attempts       |
-
-These are illustrative development configurations, not production security recommendations.
-
-## Roadmap
-
-* [x] Implement the token-bucket algorithm.
-* [x] Define TypeScript interfaces for rate-limit state and decisions.
-* [x] Implement an in-memory store.
-* [x] Integrate Upstash Redis.
-* [x] Implement atomic Redis operations with Lua.
-* [x] Verify behavior under concurrent requests.
-* [ ] **1. Policies:** Named, configurable rate-limit policies.
-* [ ] **2. Express middleware:** Protect endpoints with minimal configuration.
-* [ ] **3. Identity and keys:** Support user IDs, API keys, and IP-based limiting.
-* [ ] **4. HTTP responses:** Standard rejection responses and rate-limit headers.
-* [ ] **5. Reliability:** Redis timeouts, failure policies, and fallback behavior.
-* [ ] **6. Testing:** Unit tests, concurrency tests, and edge cases.
-* [ ] **7. Distribution:** Publish a reusable npm package.
-* [ ] **8. Integration:** Demonstrate API gateway integration.
-* [ ] **9. Production readiness:** Docker, benchmarks, documentation, and deployment.
-
-## Development Setup
-
-### Prerequisites
-
-* Node.js
-* npm
-* An Upstash Redis database or compatible Redis server
-
-### Installation
+## Development
 
 Clone the repository and install dependencies:
 
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/aman8cse/distributed-rate-limiter.git
 cd distributed-rate-limiter
-npm install
+npm ci
 ```
 
-Create a `.env` file in the project root:
+Run the unit tests:
 
-```env
-REDIS_URL=rediss://your-upstash-connection-url
+```bash
+npm test
 ```
 
-Use the connection URL provided by Upstash. Never commit credentials or `.env` files.
-
-### Verify the project
-
-Run the TypeScript checker:
+Run TypeScript type checking:
 
 ```bash
 npx tsc --noEmit
 ```
 
-Run the relevant test or development entry point using the project's configured scripts or `tsx`.
+Build the package:
 
-> Development commands may change as the project evolves. Consult `package.json` for the current scripts.
+```bash
+npm run build
+```
 
-## Design Principles
+Inspect the package contents:
 
-1. **Atomicity:** Concurrent requests must not corrupt shared bucket state.
-2. **Separation of concerns:** Algorithm, orchestration, storage, and HTTP integration should remain distinct.
-3. **Type safety:** Public contracts should be explicit and validated.
-4. **Developer experience:** Integrating rate limiting should require minimal application code.
-5. **Measurable correctness:** Concurrency, failure behavior, and performance must be tested rather than assumed.
+```bash
+npm pack --dry-run
+```
 
-## Intended Use Cases
+The build compiles TypeScript and copies the Lua script into `dist/store`.
 
-* API request throttling
-* Per-user or per-API-key quotas
-* Protection against accidental request floods
-* Distributed rate limiting across horizontally scaled services
-* API gateway rate-limit integration
+## Testing
 
-Rate limiting is one layer of application protection. It does not replace authentication, authorization, abuse detection, or other security controls.
+The unit tests cover the token-bucket algorithm and rate-limiter behavior,
+including fallback behavior.
+
+Redis-backed behavior should also be tested against a dedicated Redis instance.
 
 ## Contributing
 
-Contributions, bug reports, and design discussions will be welcome as the public interfaces stabilize.
+Contributions and bug reports are welcome.
 
-Before contributing, please discuss significant architectural changes through an issue so the project can maintain consistent design principles.
+Before submitting a change:
+
+1. Run the test suite.
+2. Run TypeScript type checking.
+3. Build the package.
+4. Verify any changes to the public API and documentation.
+
+Please include regression tests for bug fixes.
 
 ## License
 
-The project license will be specified before the first public release.
+See [LICENSE](./LICENSE).

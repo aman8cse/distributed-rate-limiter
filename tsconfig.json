@@ -1,24 +1,30 @@
 {
+  "exclude": [
+    "tests",
+    "src/server.ts",
+    "src/test.ts",
+    "src/redis-test.ts",
+    "src/config"
+  ],
   "compilerOptions": {
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-
+    "declaration": true,
+    "declarationMap": true,
     "rootDir": "./src",
     "outDir": "./dist",
-
     "strict": true,
-
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-
     "noImplicitOverride": true,
     "noImplicitReturns": true,
-
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-
     "skipLibCheck": true
   },
-  "include": ["src", "tests"]
+  "include": [
+    "src",
+    "tests"
+  ]
 }
