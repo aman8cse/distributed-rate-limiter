@@ -1,17 +1,20 @@
+import "dotenv/config";
+import express from "express";
 import { redis } from "./config/redis.js";
 import { RateLimiter } from "./core/RateLimiter.js";
 import { RedisStore } from "./store/RedisStore.js";
+import { policies } from "./config/policies.js";
+import { rateLimit } from "./middleware/rateLimiter.js";
 
-const store = new RedisStore(redis);
+const app = express();
+const limiter = new RateLimiter(new RedisStore(redis));
 
-const limiter = new RateLimiter(store, {
-  capacity: 5,
-  refillRate: 1,
+app.get("/api/products", rateLimit(limiter, { policy: policies.products }), (_req, res) => {
+  res.json({ products: ["Laptop", "Phone"] });
 });
 
-for (let i = 1; i <= 7; i++) {
-  const result = await limiter.allow("user:123");
-  console.log(`Request ${i}:`, result);
-}
+app.get("/api/orders", rateLimit(limiter, { policy: policies.orders }), (_req, res) => {
+  res.json({ orders: [] });
+});
 
-await redis.quit();
+app.listen(3000, () => console.log("Server running on http://localhost:3000"));

@@ -1,10 +1,10 @@
-import type { RateLimitDecision, TokenBucketConfig } from "./types.js";
+import type { RateLimitDecision, RateLimitPolicy } from "./types.js";
 import type { RateLimitStore } from "../store/RateLimitStore.js";
 
 export class RateLimiter {
-  constructor(private readonly store: RateLimitStore, private readonly config: TokenBucketConfig) {}
+  constructor(private readonly store: RateLimitStore) {}
 
-  public async allow(key: string): Promise<RateLimitDecision> {
-    return this.store.consume(key, this.config, Date.now());
+  public async allow(key: string, policy: RateLimitPolicy): Promise<RateLimitDecision> {
+    return this.store.consume(key, policy, Date.now());
   }
 }

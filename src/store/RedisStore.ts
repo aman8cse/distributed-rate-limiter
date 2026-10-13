@@ -2,7 +2,7 @@ import { Redis } from "ioredis";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import type { TokenBucketConfig, RateLimitDecision } from "../core/types.js";
+import type { RateLimitDecision, RateLimitPolicy } from "../core/types.js";
 import type { RateLimitStore } from "./RateLimitStore.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -16,10 +16,10 @@ export class RedisStore implements RateLimitStore {
     this.script = readFile(scriptPath, "utf8");
   }
 
-  async consume(key: string, config: TokenBucketConfig, now: number): Promise<RateLimitDecision> {
+  async consume(key: string, policy: RateLimitPolicy, now: number): Promise<RateLimitDecision> {
     const script = await this.script;
 
-    const result = await this.redis.eval(script, 1, key, config.capacity, config.refillRate, now) as [number, number, number];
+    const result = await this.redis.eval(script, 1, key, policy.capacity, policy.refillRate, now) as [number, number, number];
     const [allowed, remaining, retryAfter] = result;
 
     return allowed
