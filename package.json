@@ -19,14 +19,23 @@
     "build": "tsc && node scripts/copy-assets.mjs",
     "test": "vitest run"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": [
+    "rate-limiter",
+    "distributed-rate-limiter",
+    "redis",
+    "token-bucket",
+    "express",
+    "typescript",
+    "api-rate-limiting"
+  ],
+  "author": "Aman Agrahari",
+  "license": "MIT",
+  "description": "A distributed Redis-backed rate limiter for Node.js with atomic token-bucket enforcement and Express middleware.",
   "dependencies": {
-    "dotenv": "^18.0.7",
-    "express": "^5.2.1",
     "ioredis": "^6.0.0"
+  },
+  "peerDependencies": {
+    "express": "^4.18.0 || ^5.0.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
@@ -34,5 +43,13 @@
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aman8cse/distributed-rate-limiter.git"
+  },
+  "homepage": "https://github.com/aman8cse/distributed-rate-limiter#readme",
+  "bugs": {
+    "url": "https://github.com/aman8cse/distributed-rate-limiter/issues"
   }
 }
